@@ -8,10 +8,10 @@
 
 .DESCRIPTION
     This is a set of commandlets to interface with the LabTech Agent.
-    Tested Versions: v10.5, v11, v12, v2019
+    Tested Versions: v10.5-v12, v2019-v2024
 
 .NOTES
-    Version:        1.9.1
+    Version:        1.9.2
     Author:         Chris Taylor
     Website:        labtechconsulting.com
     Creation Date:  3/14/2016
@@ -43,7 +43,7 @@ If (-not ($PSVersionTable)) {Write-Warning 'PS1 Detected. PowerShell Version 2.0
 ElseIf ($PSVersionTable.PSVersion.Major -lt 3 ) {Write-Verbose 'PS2 Detected. PowerShell Version 3.0 or higher may be required for full functionality.'}
 
 #Module Version
-$ModuleVersion = "1.9.1"
+$ModuleVersion = "1.9.2"
 $ModuleGuid='f1f06c84-00c8-11ea-b6e8-000c29aaa7df'
 
 If ($env:PROCESSOR_ARCHITEW6432 -match '64' -and [IntPtr]::Size -ne 8 -and $env:PROCESSOR_ARCHITEW6432 -ne 'ARM64') {
@@ -559,7 +559,7 @@ Function Uninstall-LTService{
     This will uninstall the LabTech agent using the provided server URL to download the uninstallers.
 
 .NOTES
-    Version:        1.9
+    Version:        1.9.1
     Author:         Chris Taylor
     Website:        labtechconsulting.com
     Creation Date:  3/14/2016
@@ -599,6 +599,9 @@ Function Uninstall-LTService{
 
     Update Date: 6/22/2020
     Purpose/Change: Use unique pathname for Uninstall MSI, add Uninstaller EXE fallback
+
+    Update Date: 7/25/2024
+    Purpose/Change: Uninstaller EXE fallback even if server is unavailable
 
 .LINK
     http://labtechconsulting.com
@@ -687,23 +690,6 @@ Function Uninstall-LTService{
         If (-not ($Server)){
             $Server = Read-Host -Prompt 'Provide the URL to your LabTech server (https://lt.domain.com)'
         }
-        If (-not ($Server)){
-            #Download $UninstallEXE
-            $AlternateServer=$Null
-            $uninstaller='https://s3.amazonaws.com/assets-cp/assets/Agent_Uninstall.exe'
-            If ($PSCmdlet.ShouldProcess("$uninstaller", "DownloadFile")) {
-                Write-Debug "Line $(LINENUM): Downloading $UninstallEXE from $uninstaller"
-                $Script:LTServiceNetWebClient.DownloadFile($uninstaller,"$UninstallBase\$UninstallEXE")
-                If ((Test-Path "$UninstallBase\$UninstallEXE")) {
-                    If(((Get-Item "$UninstallBase\$UninstallEXE" -EA 0).length/1KB -gt 80)) {
-                        $AlternateServer='https://s3.amazonaws.com'
-                    } Else {
-                        Write-Warning "Line $(LINENUM): $UninstallEXE size is below normal. Removing suspected corrupt file."
-                        Remove-Item "$UninstallBase\$UninstallEXE" -ErrorAction SilentlyContinue -Force -Confirm:$False   
-                    }#End If
-                }#End If
-            }#End If
-        }
         $Server=ForEach ($Svr in $Server) {If (($Svr)) {If ($Svr -notmatch 'https?://.+') {"https://$($Svr)"}; $Svr}}
         ForEach ($Svr in $Server) {
             If (-not ($GoodServer)) {
@@ -733,8 +719,7 @@ Function Uninstall-LTService{
                         If ($installerResult.StatusCode -ne 200) {
                             Write-Warning "WARNING: Line $(LINENUM): Unable to download $UninstallMSI from server $($Svr)."
                             Continue
-                        }
-                        Else {
+                        } Else {
                             If ($PSCmdlet.ShouldProcess("$installer", "DownloadFile")) {
                                 Write-Debug "Line $(LINENUM): Downloading $UninstallMSI from $installer"
                                 $Script:LTServiceNetWebClient.DownloadFile($installer,"$UninstallBase\$UninstallMSI")
@@ -743,8 +728,6 @@ Function Uninstall-LTService{
                                         Write-Warning "WARNING: Line $(LINENUM): $UninstallMSI size is below normal. Removing suspected corrupt file."
                                         Remove-Item "$UninstallBase\$UninstallMSI" -ErrorAction SilentlyContinue -Force -Confirm:$False
                                         Continue
-                                    } Else {
-                                        $AlternateServer = $Svr
                                     }#End If
                                 }#End If
                             }#End If
@@ -785,8 +768,8 @@ Function Uninstall-LTService{
                         If ($WhatIfPreference -eq $True) {
                             $GoodServer = $Svr
                         } ElseIf ((Test-Path "$UninstallBase\$UninstallMSI") -and (Test-Path "$UninstallBase\$UninstallEXE")) {
-                            $GoodServer = $Svr
                             Write-Verbose "Successfully downloaded files from $($Svr)."
+                            $GoodServer = $Svr
                         } Else {
                             Write-Warning "WARNING: Line $(LINENUM): Error encountered downloading from $($Svr). Uninstall file(s) could not be received."
                             Continue
@@ -807,7 +790,23 @@ Function Uninstall-LTService{
     }#End Process
 
     End{
-        If ($GoodServer -match 'https?://.+' -or $AlternateServer -match 'https?://.+') {
+        If (-not ($GoodServer -match 'https?://.+')) {
+            #Download $UninstallEXE
+            $uninstaller='https://s3.amazonaws.com/assets-cp/assets/Agent_Uninstall.exe'
+            If ($PSCmdlet.ShouldProcess("$uninstaller", "DownloadFile")) {
+                Write-Debug "Line $(LINENUM): Downloading $UninstallEXE from $uninstaller"
+                $Script:LTServiceNetWebClient.DownloadFile($uninstaller,"$UninstallBase\$UninstallEXE")
+                If ((Test-Path "$UninstallBase\$UninstallEXE")) {
+                    If(((Get-Item "$UninstallBase\$UninstallEXE" -EA 0).length/1KB -gt 80)) {
+                        $GoodServer='https://s3.amazonaws.com'
+                    } Else {
+                        Write-Warning "Line $(LINENUM): $UninstallEXE size is below normal. Removing suspected corrupt file."
+                        Remove-Item "$UninstallBase\$UninstallEXE" -ErrorAction SilentlyContinue -Force -Confirm:$False   
+                    }#End If
+                }#End If
+            }#End If
+        }
+        If ($GoodServer -match 'https?://.+') {
             Try{
                 Write-Output "Starting Uninstall."
 
@@ -1309,7 +1308,7 @@ Function Install-LTService{
                 "/i `"$InstallBase\Installer\$InstallMSI`""
                 "SERVERADDRESS=$GoodServer"
                 If (($PSCmdlet.ParameterSetName -eq 'installertoken') -and [System.Version]$SVer -ge [System.Version]'240.331') {"TRANSFORMS=`"Agent_Install.mst`""}
-                If ($ServerPassword -and $ServerPassword -match '.') {"SERVERPASS=""$($ServerPassword)"""}
+                If ($ServerPassword -and $ServerPassword -match '.') {"SERVERPASS=`"$($ServerPassword)`""}
                 If ($LocationID -and $LocationID -match '^\d+$') {"LOCATION=$LocationID"}
                 If ($TrayPort -and $TrayPort -ne 42000) {"SERVICEPORT=$TrayPort"}
                 "/qn"
